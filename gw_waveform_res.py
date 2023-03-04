@@ -17,14 +17,15 @@ from scipy.interpolate import CubicSpline
 from astropy.cosmology import Planck18
 
 
-def amp(M,q,e,b,z,order):
+def amp(M,q,e,b,z,ti_dim,tf_dim,order):
     eta=q/(1+q)**2
     x0=get_x(e,eta,b,order)[0]
     dis=M*dsun
     Time=M*tsun
     D_GW = 1e6 * Planck18.luminosity_distance(z).value * pc # meter
     scale=D_GW/dis
-    return x0*eta/scale*Time
+    Tspan=(tf_dim-ti_dim)*Time
+    return x0*eta/scale*Tspan
 
 def get_hyp_waveform(q,e,b,ti_dim,tf_dim,t_step,inc,order):
     eta=q/(1+q)**2
@@ -133,7 +134,7 @@ def hyp_pta_res(toas,
 
     
 
-    return s_pre , amp(M,q,e0,b,z,order)
+    return s_pre/(tf-ti) , amp(M,q,e0,b,z,ti,tf,order)
     
 
 

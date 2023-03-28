@@ -16,37 +16,35 @@ from scipy.optimize import curve_fit
 from scipy.interpolate import CubicSpline
 from astropy.cosmology import Planck18
 
+def get_hyp_waveform(M,q,et0,b,ti,tf,t_step,inc,distance,order):
 
-def amp(M,q,e,b,z,ti_dim,tf_dim,order):
+
+
     eta=q/(1+q)**2
-    x0=get_x(e,eta,b,order)[0]
-    dis=M*dsun
     Time=M*tsun
-    D_GW = 1e6 * Planck18.luminosity_distance(z).value * pc # meter
-    scale=D_GW/dis
-    Tspan=(tf_dim-ti_dim)*Time
-    return x0*eta/scale*Tspan
-
-def get_hyp_waveform(q,e,b,ti_dim,tf_dim,t_step,inc,order):
-    eta=q/(1+q)**2
-    
-    x0=get_x(e,eta,b,3)[0]
+    dis=M*dsun
+    scale=distance/dis
+    x0=get_x(et0,eta,b,3)[0]
     n0=x0**(3/2)
-    t_arr=np.linspace(ti_dim,tf_dim,t_step)
-    
-    l_i=n0*ti_dim
+    tarr=np.linspace(ti,tf,t_step)
+    t_arr=tarr/Time
+    t_i=t_arr[0]
+    t_f=t_arr[len(t_arr)-1]
+    l_i=n0*t_i
 
 
-    y0=[e,n0,l_i]
-    sol2=solve_rr(eta,b,y0,ti_dim,tf_dim,t_arr)
-    earr,narr,larr=sol2
-    
+
+    y0=[et0,n0,l_i]
+    sol2=solve_rr(eta,b,y0,t_i,t_f,t_arr)
+    larr=sol2[2]
+    narr=sol2[1]
+    earr=sol2[0]
     xarr=narr**(2/3) 
     uarr=get_u_v2(larr,earr,eta,xarr,3)
 
 
 
-    step=len(t_arr)
+    step=len(tarr)
     hp_arr=np.zeros(step)
     hx_arr=np.zeros(step)
     X=np.zeros(step)
@@ -65,12 +63,16 @@ def get_hyp_waveform(q,e,b,ti_dim,tf_dim,t_step,inc,order):
         r1=rx(eta,et,u,x,order)
         X[i]=r1*cos(phi)
         Y[i]=r1*sin(phi)
-        hp_arr[i]=(-(sin(inc)**2*(z-r1**2*phit**2-rt**2)+(1+cos(inc)**2)*((z
+        hp_arr[i]=(-eta*(sin(inc)**2*(z-r1**2*phit**2-rt**2)+(1+cos(inc)**2)*((z
         +r1**2*phit**2-rt**2)*cos(2*phi)+2*r1*rt*phit*sin(2*phi))))
-        hx_arr[i]=(-2*cos(inc)*((z+r1**2*phit**2-rt**2)*sin(2*phi)-2*r1*rt*phit*cos(2*phi)))
-    Hp=hp_arr/x0
-    Hx=hx_arr/x0
+        hx_arr[i]=(-2*eta*cos(inc)*((z+r1**2*phit**2-rt**2)*sin(2*phi)-2*r1*rt*phit*cos(2*phi)))
+    Hp=hp_arr/scale
+    Hx=hx_arr/scale
+
+
     return Hp-Hp[0],Hx-Hx[0]
+
+
 
 @enterprise_function
 def hyp_pta_res(toas,
@@ -84,28 +86,53 @@ def hyp_pta_res(toas,
     q,
     b,
     e0,
-    log10_z,
+    log10_S,
     tref,
     interp_steps=1000
 ):
-
+    """
+    Compute the PTA signal due to a hyperbolic encounter.
+    toas        are pulsar toas in s in SSB frame
+    theta       is pulsar zenith angle in rad
+    phi         is pulsar RA in rad
+    cos_gwtheta is cos zenith angle of the GW source
+    gwphi       is the RA of the GW source in rad
+    psi         is the GW polarization angle in rad
+    cos_inc     is the cos inclination of the GW source
+    log10_M     is the log10 total mass of the GW source in solar mass
+    q           is the mass ratio of the GW source
+    b           is the impact parameter of the GW source in total mass
+    e0          is the eccentricity of the GW source
+    log10_z     is the log10 cosmological redshift of the GW source
+    tref        is the fiducial time in s in SSB frame
+    interp_steps is the number of samples used for interpolating the PTA signal
+    """
     order = 3
-
     M = 10**log10_M # Solar mass
-    z = 10**log10_z 
-
+    S = 10**log10_S
+    dis=M*dsun
     Time=M*tsun
+    
+    
 
-    ts = (toas - tref)/Time
+    ts = toas - tref
 
     # ti, tf, tzs in seconds, in source frame
     ti = min(ts)
     tf = max(ts)
-    tz_arr = np.linspace(ti, tf, interp_steps)
-    delta_t_arr = (tz_arr[1]-tz_arr[0]) 
-
-    tzs = ts
+    Tspan=tf-ti
+    eta=q/(1+q)**2
     
+    x0=get_x(e0,eta,b,3)[0]
+    
+    D_GW = dis*x0*Tspan*eta/S
+    
+    tz_arr = np.linspace(ti, tf, interp_steps)
+    delta_t_arr = (tz_arr[1]-tz_arr[0])
+
+    
+    
+   
 
     inc = np.arccos(cos_inc)
 
@@ -115,8 +142,7 @@ def hyp_pta_res(toas,
     psrra = phi
     psrdec = np.pi/2 - theta
 
-    hp_arr, hx_arr = get_hyp_waveform(q,e0,b,ti,tf,interp_steps,inc,order)
-
+    hp_arr, hx_arr = get_hyp_waveform(M, q, e0, b, ti, tf, interp_steps, inc, D_GW, order)
 
     cosmu, Fp, Fx = ap.antenna_pattern(gwra, gwdec, psrra, psrdec)
 
@@ -128,15 +154,7 @@ def hyp_pta_res(toas,
 
     # Integrate over time in SSB frame
     s_arr = cumtrapz(h_arr, initial=0)*delta_t_arr
-
     s_spline = CubicSpline(tz_arr, s_arr)
-    s_pre = s_spline(ts)
+    s = s_spline(ts)
 
-    
-
-    return s_pre/(tf-ti) , amp(M,q,e0,b,z,ti,tf,order)
-    
-
-
-
-
+    return s
